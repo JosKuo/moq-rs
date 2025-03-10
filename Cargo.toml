@@ -17,6 +17,9 @@ web-transport = "0.3"
 env_logger = "0.11"
 log = { version = "0.4", features = ["std"] }
 
+[patch.crates-io]
+mp4 = { path = "./third_party/mp4-rust" }
+
 # Use debug symbols in production until things are more stable
 [profile.release]
 debug = true

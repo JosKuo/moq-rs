@@ -1,10 +1,10 @@
 use anyhow::{self, Context};
 use bytes::{Buf, Bytes};
 use moq_transport::serve::{SubgroupWriter, SubgroupsWriter, TrackWriter, TracksWriter};
-use mp4::{self, ReadBox, TrackType};
+use mp4::{self, ReadBox, TrackType, WriteBox};
 use std::cmp::max;
 use std::collections::HashMap;
-use std::io::Cursor;
+use std::io::{BufWriter, Cursor};
 use std::time;
 
 pub struct Media {
@@ -91,6 +91,16 @@ impl Media {
 
                 self.setup(&moov, atom)?;
                 self.moov = Some(moov);
+            }
+            mp4::BoxType::PrftBox => {
+                let prft = mp4::PrftBox::read_box(&mut reader, header.size).context("failed to read prft box")?;
+
+                // Put this prft to all tracks
+                for (track_id, track) in self.tracks.iter_mut() {
+                    let mut t_prft = prft.clone();
+                    t_prft.reference_track_id = *track_id;
+                    track.last_prft = t_prft;
+                }
             }
             mp4::BoxType::MoofBox => {
                 let moof = mp4::MoofBox::read_box(&mut reader, header.size)?;
@@ -323,6 +333,10 @@ struct Track {
     // The current segment
     current: Option<SubgroupWriter>,
 
+    // Last PRFT box for this track
+	last_prft: mp4::PrftBox,
+
+
     // The number of units per second.
     timescale: u64,
 
@@ -335,12 +349,18 @@ impl Track {
         Self {
             track: track.groups().unwrap(),
             current: None,
+            last_prft: mp4::PrftBox::default(),
             timescale,
             handler,
         }
     }
 
     pub fn header(&mut self, raw: Bytes, fragment: Fragment) -> anyhow::Result<()> {
+        
+        let mut prft_buffer = BufWriter::new(Vec::new());
+		self.last_prft.write_box(&mut prft_buffer)?;
+		let prft = prft_buffer.into_inner()?;
+
         if let Some(current) = self.current.as_mut() {
             // Use the existing segment
             current.write(raw)?;
@@ -368,7 +388,8 @@ impl Track {
         );
 
         // Write the fragment in it's own object.
-        segment.write(raw)?;
+        segment.write(prft.into())?;
+        segment.write(raw.into())?;
 
         // Save for the next iteration
         self.current = Some(segment);
