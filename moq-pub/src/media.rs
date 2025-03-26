@@ -130,9 +130,11 @@ impl Media {
                     .get_mut(&fragment.track)
                     .context("failed to find track")?;
 
+                
                 // Save the track ID for the next iteration, which must be a mdat.
                 anyhow::ensure!(self.current.is_none(), "multiple moof atoms");
                 self.current.replace(fragment.track);
+
 
                 // Publish the moof header, creating a new segment if it's a keyframe.
                 track
@@ -398,8 +400,13 @@ impl Track {
     }
 
     pub fn data(&mut self, raw: Bytes) -> anyhow::Result<()> {
+        let mut prft_buffer = BufWriter::new(Vec::new());
+		self.last_prft.write_box(&mut prft_buffer)?;
+		let prft: Vec<u8> = prft_buffer.into_inner()?;
+
         let segment = self.current.as_mut().context("missing current fragment")?;
         segment.write(raw)?;
+        segment.write(prft.into())?;
 
         Ok(())
     }
@@ -412,12 +419,14 @@ impl Track {
 struct Fragment {
     // The track for this fragment.
     track: u32,
-
+    
     // The timestamp of the first sample in this fragment, in timescale units.
     timestamp: u64,
 
     // True if this fragment is a keyframe.
     keyframe: bool,
+
+
 }
 
 impl Fragment {
