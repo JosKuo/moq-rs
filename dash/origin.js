@@ -118,11 +118,7 @@ const options = yargs(hideBin(process.argv)) // Use default export and hideBin
 /// process command line options
 function parse_cmd() {
   // set given or default values
-  if (options.data) {
-    data_root = options.data;
-  } else {
-    data_root = "./"; // Ensure it points to the project root
-  }
+  data_root = "./dev/dash_output"; // Assign to the global variable
 
   if (options.port_in) {
     server_port_ingest = options.port_in;
@@ -315,7 +311,10 @@ function request_listener(req, res) {
   } else if (req.method == "GET") {
     const suffix_idx = req.url.lastIndexOf(".");
     const suffix = req.url.slice(suffix_idx, req.url.length);
-    var filename = data_root + req.url;
+
+    // Normalize the file path by removing the "/dev" prefix
+    const normalized_url = req.url.startsWith("/dev") ? req.url.slice(4) : req.url;
+    var filename = data_root + normalized_url;
 
     if (options.verbose) {
       console.log(`GET ${req.url}`);

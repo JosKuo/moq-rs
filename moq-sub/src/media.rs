@@ -162,6 +162,24 @@ impl<O: AsyncWrite + Send + Unpin + 'static> Media<O> {
         while let Some(chunk) = object.read().await? {
             buf.extend_from_slice(&chunk);
         }
+
+        // Parse and print prft boxes
+        let mut cursor = Cursor::new(&buf);
+        while let Ok(atom) = read_atom(&mut cursor).await {
+            let box_type = &atom[4..8];
+            debug!("Found box type: {:?}", String::from_utf8_lossy(box_type));
+            if box_type == b"prft" {
+                debug!("Found prft box");
+                let mut prft_reader = Cursor::new(&atom);
+                let prft_header = mp4::BoxHeader::read(&mut prft_reader)?;
+                // Add fallback logging if PrftBox parsing fails
+                match mp4::PrftBox::read_box(&mut prft_reader, prft_header.size) {
+                    Ok(prft_box) => info!("Parsed prft box: {:?}", prft_box),
+                    Err(err) => warn!("Failed to parse prft box: {err:?}"),
+                }
+            }
+        }
+
         Ok(buf)
     }
 }
