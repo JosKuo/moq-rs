@@ -8,21 +8,11 @@ cd "$(dirname "$0")/.."
 mkdir -p dev/dash_output
 
 # Remove any existing files in the dash_output directory
-rm -f dev/dash_output/*.m4s dev/dash_output/*.mpd
 
 if [ ! -f dev/bbb.mp4 ]; then
 	echo "Downloading ya boye Big Buck Bunny..."
 	wget http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4 -O dev/bbb.mp4
 fi
-
-echo "Generating DASH .mpd file and .m4s chunks..."
-ffmpeg -i dev/bbb.mp4 \
-	-map 0:v -map 0:a \
-	-c:v libx264 -c:a aac \
-	-f dash -seg_duration 1 \
-	-use_timeline 1 -use_template 1 -window_size 5 \
-	-adaptation_sets "id=0,streams=v id=1,streams=a" \
-	dev/dash_output/bbb.mpd
 
 HOST="${HOST:-localhost}"
 PORT="${PORT:-8080}" # Default port changed to 8080
@@ -33,6 +23,17 @@ NAME="${NAME:-bbb}"
 
 INPUT="${INPUT:-dev/dash_output}"
 
-# Start the DASH relay using ./dash/origin.js
+# Start the DASH relay using ./dash/origin.js in the background
+# Generate DASH .mpd file and .m4s chunks
+echo "Generating DASH .mpd file and .m4s chunks..."
+ffmpeg -i dev/bbb.mp4 \
+	-map 0:v -map 0:a \
+	-c:v libx264 -c:a aac \
+	-f dash -seg_duration 1 \
+	-use_timeline 1 -use_template 1 -window_size 5 \
+	-adaptation_sets "id=0,streams=v id=1,streams=a" \
+	-write_prft 1 \
+	dev/dash_output/bbb.mpd
+
 echo "Starting DASH relay..."
-node ./dash/origin.js --verbose --host "$HOST" --port "$PORT" --input "$INPUT" --name "$NAME"
+node ./dash/origin.js --verbose --host "$HOST" --port "$PORT" --data dev/dash_output --name "$NAME" 

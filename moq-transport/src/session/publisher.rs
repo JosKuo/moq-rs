@@ -26,9 +26,9 @@ pub struct Publisher {
 
     announces: Arc<Mutex<HashMap<Tuple, AnnounceRecv>>>,
     subscribed: Arc<Mutex<HashMap<u64, SubscribedRecv>>>,
-    fetched: Arc<Mutex<HashMap<u64, FetchedRecv>>>,
+    fetched: Arc<Mutex<HashMap<u64, FetchedRecv>>>, //Stores active fetch requests.
     unknown: Queue<Subscribed>,
-    unknown_fetch: Queue<Fetched>,
+    unknown_fetch: Queue<Fetched>, //Stores unknown fetch requests (not yet routed to an announce).
 
     outgoing: Queue<Message>,
 }
@@ -39,7 +39,7 @@ impl Publisher {
             webtransport,
             announces: Default::default(),
             subscribed: Default::default(),
-            fetched: Default::default(),
+            fetched: Default::default(), 
             unknown: Default::default(),
             unknown_fetch: Default::default(),
             outgoing,
@@ -155,18 +155,18 @@ impl Publisher {
     }
 
     pub async fn serve_fetch(fetch: Fetched, mut tracks: TracksReader) -> Result<(), SessionError> {
+        // Placeholder implementation for serving fetch requests.
+        // Currently, this function does not provide actual track data.
+        // Future improvements could allow random access to tracks for more meaningful responses.
 
-        // If our Tracks allowed random access, we could probably just do something like this:
+        // Example of a potential implementation:
         // if let Some(track) = tracks.subscribe(&fetch.name) {
         //     fetch.serve(track).await?;
         // } else {
         //     fetch.close(ServeError::NotFound)?;
         // }
 
-        // For now, make every fetch return the same stub data by creating a new track to serve
-
-
-
+        // For now, this function simply returns an empty result.
         Ok(())
     }
 
@@ -263,27 +263,41 @@ impl Publisher {
     }
 
     fn recv_fetch(&mut self, msg: message::Fetch) -> Result<(), SessionError> {
+        /*
+        Data Flow for FETCH Requests
+            1. Incoming FETCH Message: The recv_fetch method is called when a FETCH message is received.
+            2. Create and Store Fetched Object: A Fetched object is created and stored in the fetched map.
+            3. Route or Queue the Request: The request is routed to an Announce object if available.
+            Otherwise, it is added to the unknown_fetch queue.
+            4. Serve the Request: The serve_fetch method is called to serve the requested data.
+         */
         let namespace = msg.track_namespace.clone();
 
+        // Create a new fetch object and store it in the `fetched` map.
         let fetch = {
             let mut fetches = self.fetched.lock().unwrap();
 
+            // Ensure the fetch ID is unique; return an error if it already exists.
             let entry = match fetches.entry(msg.id) {
                 hash_map::Entry::Occupied(_) => return Err(SessionError::Duplicate),
                 hash_map::Entry::Vacant(entry) => entry,
             };
 
+            // Create a new `Fetched` instance and insert it into the map.
             let (send, recv) = Fetched::new(self.clone(), msg);
             entry.insert(recv);
 
             send
         };
 
+        // If the namespace is associated with an active announce, route the fetch to it.
         if let Some(announce) = self.announces.lock().unwrap().get_mut(&namespace) {
             return announce.recv_fetch(fetch).map_err(Into::into);
         }
 
+        // If no active announce exists for the namespace, add the fetch to the `unknown_fetch` queue.
         if let Err(err) = self.unknown_fetch.push(fetch) {
+            // If pushing to the queue fails, close the fetch with a "Not Found" error.
             err.close(ServeError::NotFound)?;
         }
 
