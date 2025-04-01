@@ -15,7 +15,8 @@ use crate::{
 use crate::watch::Queue;
 
 use super::{
-    Announce, AnnounceRecv, Session, SessionError, Subscribed, SubscribedRecv, TrackStatusRequested,
+    Announce, AnnounceRecv, Fetched, FetchedRecv, Session, SessionError, Subscribed,
+    SubscribedRecv, TrackStatusRequested,
 };
 
 // TODO remove Clone.
@@ -25,7 +26,9 @@ pub struct Publisher {
 
     announces: Arc<Mutex<HashMap<Tuple, AnnounceRecv>>>,
     subscribed: Arc<Mutex<HashMap<u64, SubscribedRecv>>>,
+    fetched: Arc<Mutex<HashMap<u64, FetchedRecv>>>,
     unknown: Queue<Subscribed>,
+    unknown_fetch: Queue<Fetched>,
 
     outgoing: Queue<Message>,
 }
@@ -36,7 +39,9 @@ impl Publisher {
             webtransport,
             announces: Default::default(),
             subscribed: Default::default(),
+            fetched: Default::default(),
             unknown: Default::default(),
+            unknown_fetch: Default::default(),
             outgoing,
         }
     }
@@ -74,8 +79,10 @@ impl Publisher {
         };
 
         let mut subscribe_tasks = FuturesUnordered::new();
+        let mut fetch_tasks = FuturesUnordered::new();
         let mut status_tasks = FuturesUnordered::new();
         let mut subscribe_done = false;
+        let mut fetch_done = false;
         let mut status_done = false;
 
         loop {
@@ -93,6 +100,22 @@ impl Publisher {
                             });
                         },
                         None => subscribe_done = true,
+                    }
+
+                },
+                res = announce.fetched(), if !fetch_done => {
+                    match res? {
+                        Some(fetched) => {
+                            let tracks = tracks.clone();
+
+                            fetch_tasks.push(async move {
+                                let info = fetched.info.clone();
+                                if let Err(err) = Self::serve_fetch(fetched, tracks).await {
+                                    log::warn!("failed serving subscribe: {:?}, error: {}", info, err)
+                                }
+                            });
+                        },
+                        None => fetch_done = true,
                     }
 
                 },
@@ -127,6 +150,22 @@ impl Publisher {
         } else {
             subscribe.close(ServeError::NotFound)?;
         }
+
+        Ok(())
+    }
+
+    pub async fn serve_fetch(fetch: Fetched, mut tracks: TracksReader) -> Result<(), SessionError> {
+
+        // If our Tracks allowed random access, we could probably just do something like this:
+        // if let Some(track) = tracks.subscribe(&fetch.name) {
+        //     fetch.serve(track).await?;
+        // } else {
+        //     fetch.close(ServeError::NotFound)?;
+        // }
+
+        // For now, make every fetch return the same stub data by creating a new track to serve
+
+
 
         Ok(())
     }
@@ -169,6 +208,10 @@ impl Publisher {
         self.unknown.pop().await
     }
 
+    pub async fn fetched(&mut self) -> Option<Fetched> {
+        self.unknown_fetch.pop().await
+    }
+
     pub(crate) fn recv_message(&mut self, msg: message::Subscriber) -> Result<(), SessionError> {
         let res = match msg {
             message::Subscriber::AnnounceOk(msg) => self.recv_announce_ok(msg),
@@ -184,7 +227,7 @@ impl Publisher {
             message::Subscriber::SubscribeNamespaceError(_msg) => unimplemented!(),
             message::Subscriber::UnsubscribeNamespace(_msg) => unimplemented!(),
             // TODO: Implement fetch messages
-            message::Subscriber::Fetch(_msg) => todo!(),
+            message::Subscriber::Fetch(msg) => self.recv_fetch(msg),
             message::Subscriber::FetchCancel(_msg) => todo!(),
         };
 
@@ -212,10 +255,36 @@ impl Publisher {
     }
 
     fn recv_announce_cancel(&mut self, msg: message::AnnounceCancel) -> Result<(), SessionError> {
-        // TODO: If a publisher receives new subscriptions for that namespace after receiving an ANNOUNCE_CANCEL,
-        // it SHOULD close the session as a 'Protocol Violation'.
         if let Some(announce) = self.announces.lock().unwrap().remove(&msg.namespace) {
             announce.recv_error(ServeError::Cancel)?;
+        }
+
+        Ok(())
+    }
+
+    fn recv_fetch(&mut self, msg: message::Fetch) -> Result<(), SessionError> {
+        let namespace = msg.track_namespace.clone();
+
+        let fetch = {
+            let mut fetches = self.fetched.lock().unwrap();
+
+            let entry = match fetches.entry(msg.id) {
+                hash_map::Entry::Occupied(_) => return Err(SessionError::Duplicate),
+                hash_map::Entry::Vacant(entry) => entry,
+            };
+
+            let (send, recv) = Fetched::new(self.clone(), msg);
+            entry.insert(recv);
+
+            send
+        };
+
+        if let Some(announce) = self.announces.lock().unwrap().get_mut(&namespace) {
+            return announce.recv_fetch(fetch).map_err(Into::into);
+        }
+
+        if let Err(err) = self.unknown_fetch.push(fetch) {
+            err.close(ServeError::NotFound)?;
         }
 
         Ok(())

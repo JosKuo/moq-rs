@@ -8,6 +8,8 @@ mod subscribed;
 mod subscriber;
 mod track_status_requested;
 mod writer;
+mod fetched;
+mod fetch;
 
 pub use announce::*;
 pub use announced::*;
@@ -17,6 +19,8 @@ pub use subscribe::*;
 pub use subscribed::*;
 pub use subscriber::*;
 pub use track_status_requested::*;
+pub use fetched::*;
+pub use fetch::*;
 
 use reader::*;
 use writer::*;
