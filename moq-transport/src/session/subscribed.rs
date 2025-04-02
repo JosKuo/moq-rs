@@ -69,12 +69,15 @@ impl Subscribed {
     }
 
     pub async fn serve(mut self, track: serve::TrackReader) -> Result<(), SessionError> {
+
         let res = self.serve_inner(track).await;
+        
         if let Err(err) = &res {
             self.close(err.clone().into())?;
         }
-
+       
         res
+        
     }
 
     async fn serve_inner(&mut self, track: serve::TrackReader) -> Result<(), SessionError> {
@@ -166,14 +169,38 @@ impl Drop for Subscribed {
 }
 
 impl Subscribed {
-    async fn serve_track(&mut self, mut track: serve::StreamReader) -> Result<(), SessionError> {
-        let mut stream = self.publisher.open_uni().await?;
+    
+    pub async fn serve_probe(&mut self, probe_size: usize, probe_priority: u32) -> Result<(), SessionError> {
+        log::info!(
+            "Serving probe data | size: {}, priority: {}",
+            probe_size,
+            probe_priority
+        );
 
-        // TODO figure out u32 vs u64 priority
-        stream.set_priority(track.priority as i32);
+        let mut stream = self.publisher.open_uni().await?;
+        stream.set_priority(probe_priority as i32);
 
         let mut writer = Writer::new(stream);
 
+        // Create a payload of zeros
+        let payload = vec![0_u8; probe_size];
+
+        // Write the payload to the stream
+        writer.write(&payload).await?;
+        log::info!("Sent probe data of size: {}", probe_size);
+
+        Ok(())
+    }
+
+    async fn serve_track(&mut self, mut track: serve::StreamReader) -> Result<(), SessionError> {
+        log::info!("trackname!!!: {}", track.info.name);
+        let mut stream = self.publisher.open_uni().await?;
+    
+        // TODO figure out u32 vs u64 priority
+        stream.set_priority(track.priority as i32); //Not for probe?
+    
+        let mut writer = Writer::new(stream);
+    
         let header: data::Header = data::TrackHeader {
             subscribe_id: self.msg.id,
             track_alias: self.msg.track_alias,
@@ -216,11 +243,14 @@ impl Subscribed {
     }
 
     async fn serve_subgroups(
+        
         &mut self,
         mut subgroups: serve::SubgroupsReader,
     ) -> Result<(), SessionError> {
         let mut tasks = FuturesUnordered::new();
         let mut done: Option<Result<(), ServeError>> = None;
+        
+        log::info!("Im in subgroups");
 
         loop {
             tokio::select! {

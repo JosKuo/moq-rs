@@ -223,34 +223,88 @@ impl Publisher {
 
     fn recv_subscribe(&mut self, msg: message::Subscribe) -> Result<(), SessionError> {
         let namespace = msg.track_namespace.clone();
-
+        let track_name = msg.track_name.clone();
+    
+        log::info!("✅ Creating a subscribe instance for:{}", track_name);
+    
+        // Check if this is a `.probe` subscription
+        if track_name.starts_with(".probe") {
+            log::info!("Handling `.probe` subscription: {:?}", msg);
+    
+            // Parse probe parameters
+            let mut probe_size = 10; // Default size
+            let mut probe_priority = 0; // Default priority
+            if track_name.starts_with(".probe:") {
+                let parameters = track_name.split(":").collect::<Vec<&str>>();
+                probe_size = parameters.get(1).unwrap_or(&"20000").parse().unwrap_or(20000);
+                probe_priority = parameters.get(2).unwrap_or(&"254").parse().unwrap_or(254);
+            }
+    
+            // Create a [Subscribed](http://_vscodecontentref_/1) instance for the probe
+            let mut subscribe = {
+                let mut subscribes = self.subscribed.lock().unwrap();
+    
+                let entry = match subscribes.entry(msg.id) {
+                    hash_map::Entry::Occupied(_) => return Err(SessionError::Duplicate),
+                    hash_map::Entry::Vacant(entry) => entry,
+                };
+    
+                let (send, recv) = Subscribed::new(self.clone(), msg.clone());
+                entry.insert(recv);
+    
+                send
+            };
+    
+            // Serve the probe data
+            tokio::spawn(async move {
+                if let Err(err) = subscribe.serve_probe(probe_size, probe_priority).await {
+                    log::warn!("Failed to serve probe: {:?}", err);
+                }
+            });
+    
+            // Send SubscribeOk to acknowledge the probe
+            self.outgoing.push(
+                message::SubscribeOk {
+                    id: msg.id,
+                    expires: None,
+                    group_order: message::GroupOrder::Descending,
+                    latest: Default::default(),
+                }
+                .into(),
+            ).map_err(|err| SessionError::Internal)?;
+    
+            return Ok(()); // Return early to avoid routing to an announce
+        }
+    
+        // Handle regular subscriptions
         let subscribe = {
             let mut subscribes = self.subscribed.lock().unwrap();
-
+    
             // Insert the abort handle into the lookup table.
             let entry = match subscribes.entry(msg.id) {
                 hash_map::Entry::Occupied(_) => return Err(SessionError::Duplicate),
                 hash_map::Entry::Vacant(entry) => entry,
             };
-
+    
             let (send, recv) = Subscribed::new(self.clone(), msg);
             entry.insert(recv);
-
+    
             send
         };
-
+    
         // If we have an announce, route the subscribe to it.
         if let Some(announce) = self.announces.lock().unwrap().get_mut(&namespace) {
+            log::info!("✅ Routing subscription to announce:{}", track_name);
+    
             return announce.recv_subscribe(subscribe).map_err(Into::into);
         }
-
+    
         // Otherwise, put it in the unknown queue.
-        // TODO Have some way to detect if the application is not reading from the unknown queue.
         if let Err(err) = self.unknown.push(subscribe) {
-            // Default to closing with a not found error I guess.
+            log::info!("⚠️Unknown queue! -> Server not found");
             err.close(ServeError::NotFound)?;
         }
-
+    
         Ok(())
     }
 
