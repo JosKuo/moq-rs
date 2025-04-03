@@ -92,13 +92,26 @@ impl Fetched {
 
         self.ok = true;
 
+        self.serve_data().await //COMMENT THIS AND UNCOMMENT BELLOW TO MAKE THE STREAM WORK AGAIN
         // TODO: alway serve Fetch responses on a single stream
-        match track.mode().await? {
+        /*match track.mode().await? {
             // TODO cancel track/datagrams on closed
             TrackReaderMode::Stream(stream) => self.serve_track(stream).await,
             TrackReaderMode::Subgroups(subgroups) => self.serve_subgroups(subgroups).await,
             TrackReaderMode::Datagrams(datagrams) => self.serve_datagrams(datagrams).await,
-        }
+        }*/
+    }
+
+    async fn serve_data(&mut self)-> Result<(), SessionError>{
+        let zeros: [u8; 1024] = [0; 1024]; 
+        let mut stream = self.publisher.open_uni().await?;
+        stream.set_priority(self.msg.subscriber_priority as i32);
+        let mut writer = Writer::new(stream);
+
+        log::info!("WRITING ZEROS!");
+        writer.write(&zeros).await?;
+
+        Ok(())
     }
 
     async fn serve_track(&mut self, mut _track: serve::StreamReader) -> Result<(), SessionError> {
@@ -127,15 +140,10 @@ impl Fetched {
 
 
         while let Some(mut object) = track.next().await? {
-            log::debug!("sending object from group {}", object.group_id);
             while let Some(chunk) = object.read_next().await? {
-                log::debug!("sending payload: {:?}", &chunk);
                 writer.write(&chunk).await?;
             }
-            log::debug!("sent group done");
         }
-        log::debug!("Serving fetch (serve_subgroups) - wrote data");
-
         Ok(())
     }
 
