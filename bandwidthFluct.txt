@@ -1,0 +1,6 @@
+5s 8mbit     
+5s 6.5mbit    
+5s 5.5mbit   
+5s 4.5mbit     
+5s 3.5mbit    
+5s 8mbit 
