@@ -128,7 +128,7 @@ common_settings="settb=AVTB,setpts='trunc(PTS/1K)*1K+st(1,trunc(RTCTIME/1K))-1K*
 scaling_alg=bicubic
 
 filter_v0="
-	[0:v]fps=${video_fps1},
+	[v0]fps=${video_fps1},
 	${common_settings},
 	drawtext=${drawtext_time},
 	drawtext=text='${res1_text}-${video_bitrate1}':x=w-tw:y=h-th:${drawtext_base},
@@ -188,8 +188,6 @@ codec_v2="-c:v:2 $COMMON_X264_PARAMS \
 #Creates 3 video tracks simulating realtime live stream and an audio track with server clock
 #overlayed at top left corner and video resolution-bitrate overlayed at bottom right corner
 
-# Original block (commented out)
-: '
 ffmpeg -hide_banner -v quiet \
 	-stream_loop -1 -re \
 	-i "$INPUT" -r ${videofps} \
@@ -200,18 +198,5 @@ ffmpeg -hide_banner -v quiet \
 	$codec_v2 \
 	-c:a copy -an \
 	-f mp4 -movflags cmaf+separate_moof+delay_moov+skip_trailer+frag_every_frame \
-	-write_prft wallclock \
-	- | cargo run --bin moq-pub -- --name "$NAME" "$URL" $additional_args
-'
-
-# New block with only the first video codec
-ffmpeg -hide_banner -v quiet \
-	-stream_loop -1 -re \
-	-i "$INPUT" -r ${videofps} \
-	-filter_complex "${filter_v0}" \
-	-map "[v0final]" \
-	$codec_v0 \
-	-c:a copy -an \
-	-f mp4 -movflags cmaf+separate_moof+delay_moov+skip_trailer+frag_every_frame \
-	-write_prft wallclock \
+    -write_prft wallclock \
 	- | cargo run --bin moq-pub -- --name "$NAME" "$URL" $additional_args
