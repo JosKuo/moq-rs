@@ -208,9 +208,18 @@ impl Media {
                 let codec = rfc6381_codec::Codec::avc1(profile, constraints, level);
                 let codec_str = codec.to_string();
 
+                
                 selection_params.codec = Some(codec_str);
                 selection_params.width = Some(width.into());
                 selection_params.height = Some(height.into());
+                
+                let bitrate = match (width, height) {
+                    (1920, 1080) => 6_000_000, // 1080p ~ 5 Mbps
+                    (1280, 720) => 5_000_000,  // 720p ~ 3 Mbps
+                    (640, 480) => 4_000_000,   // 480p ~ 1.5 Mbps 
+                    _ => 1_000_000,            // Default fallback ~ 1 Mbps
+                };
+                selection_params.bitrate = Some(bitrate);
             } else if let Some(_hev1) = &stsd.hev1 {
                 // TODO https://github.com/gpac/mp4box.js/blob/325741b592d910297bf609bc7c400fc76101077b/src/box-codecs.js#L106
                 anyhow::bail!("HEVC not yet supported")
@@ -262,6 +271,13 @@ impl Media {
             let track = Track::new(track, handler, timescale);
             self.tracks.insert(id, track);
         }
+
+        // Sort tracks by bitrate descending (lowest first, highest last)
+        tracks.sort_by(|a, b| {
+            let a_bitrate = a.selection_params.bitrate.unwrap_or(0);
+            let b_bitrate = b.selection_params.bitrate.unwrap_or(0);
+            a_bitrate.cmp(&b_bitrate)
+        });
 
         let catalog = moq_catalog::Root {
             version: 1,
